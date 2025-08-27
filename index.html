@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ORJ</title>
+    <style>
+        body {
+            background-color: #ccc;
+        }
+        .category.active {
+            background-color: brown;
+        }
+        /* classic, e.g. in renderdata. */
+        .classic {
+            color: teal;
+            display: border-box;
+        }
+    </style>
+</head>
+<body>
+    <h1>ORJ.st</h1>
+    <div>
+        <!-- Categories -->
+        <h2>Lobbyable Categories</h2>
+        <button class="category" data-category="All">All</button>
+        <button class="category" data-category="CIS">CIS</button>
+        <button class="category" data-category="PIM">PIM</button>
+        <button class="category" data-category="BIL">BIL</button>
+    </div>
+    <div>
+        <!-- Filters -->
+        <h5>Filters</h5>
+        <label for="location">Location:</label>
+        <select id="location" multiple>
+            <option value="AS">American Samoa</option>
+            <option value="AG">Antigua & Barbuda</option>
+            <option value="DZ">Algeria</option>
+        </select>
+
+        <p>Year Rank:</p>
+        <select id="yearrank0">
+            <option value="">Select minimum year...</option>
+            <option value="0.3">0.3+</option>
+            <option value="6">6+</option>
+        </select>
+        <select id="yearrank1">
+            <option value="">Select maximum year...</option>
+            <option value="7">7 or less</option>
+        </select>
+    </div>
+
+    <div>
+        <!-- Search -->
+        <input type="text" id="search" placeholder="Search by title">
+    </div>
+
+    <div>
+        <!-- Sort -->
+        Sort <button id="sort">DESC</button>
+    </div>
+    
+    <div>
+        <button id="clear-filters">Clear Filters</button>
+    </div>
+
+    <div>
+        <!-- List -->
+        <h3>Jobs</h3>
+        <div id="job-list"></div>
+    </div>
+
+
+    
+    <!-- Pagination -->
+    <ul id="pagination"></ul>
+
+
+
+
+
+
+
+<script>
+    let currentFilters = {
+        category: "All",
+        location: "", // Added location filter
+        yearrank0: "", // Added yearrank0 filter
+        yearrank1: "", // Added yearrank1 filter
+        search: "",
+        sort: "desc",
+        page: 1,
+    };
+
+
+    // First load function to manage the order of precedence. Re-routing -> cookies -> default.
+    function initload() {
+        const HLPcategory = "{{ HLPcategory }}";
+        const HLPsort = "{{ HLPsort }}";
+        const HLPlocation = "{{ HLPlocation }}";
+
+        // Check if any of the values exist from Flask ({{ HLPcategory }}, {{ HLPsort }}, {{ HLPlocation }})
+        if (HLPcategory || HLPsort || HLPlocation) {
+            // If preset values exist, use those
+            preSelectFilters(HLPcategory, HLPlocation, HLPsort);
+        } else {
+            // Else, load filters from cookies
+            loadFiltersFromCookies();
+        }
+    }
+
+
+    // Function to pre-select the category, location, and sort filters. From data of e.g. /africajobs passed from server.
+    function preSelectFilters(HLPcategory, HLPlocation, HLPsort) {
+        // Pre-select category
+        const categoryButtons = document.querySelectorAll('.category');
+        categoryButtons.forEach(button => {
+            if (button.dataset.category === HLPcategory) {
+                button.classList.add('active');  // Mark it as selected
+                // Trigger the click event manually to ensure listeners react to the selection
+                button.click();
+            }
+        });
+
+
+
+        // Pre-select location (if it's a multi-select dropdown)
+        const locationSelect = document.getElementById('location');
+        if (HLPlocation) {
+            const selectedLocations = HLPlocation.split(',');
+            Array.from(locationSelect.options).forEach(option => {
+                if (selectedLocations.includes(option.value)) {
+                    option.selected = true;  // Mark the option as selected
+                }
+            });
+
+            // Trigger the change event manually to ensure listeners react to the selection
+            const event = new Event('change');
+            locationSelect.dispatchEvent(event);
+        }
+            
+
+        // Pre-select sort (default to descending or ascending)
+        const sortButton = document.getElementById('sort');
+        if (sortButton) {
+            if (HLPsort === 'asc') {
+                sortButton.textContent = 'Sort ASC';
+            } else {
+                sortButton.textContent = 'Sort DSC';
+            }
+
+            // Trigger the click event manually to set the correct sort
+            sortButton.click();
+        }
+    }
+
+    
+
+
+
+
+    // Load filters from cookies if they exist
+    function loadFiltersFromCookies() {
+        const cookies = document.cookie.split(';');
+        const filterData = cookies.reduce((acc, cookie) => {
+            const [key, value] = cookie.trim().split('=');
+            if (key && value) {
+                try {
+                    acc[key] = JSON.parse(decodeURIComponent(value)); // Parse JSON for arrays
+                } catch {
+                    acc[key] = decodeURIComponent(value); // For non-JSON
+                }
+            }
+            return acc;
+        }, {});
+        
+
+        // If cookies exist, load into currentFilters
+        if (filterData.category) currentFilters.category = filterData.category;
+        if (filterData.location) currentFilters.location = filterData.location;
+        if (filterData.yearrank0) currentFilters.yearrank0 = filterData.yearrank0;
+        if (filterData.yearrank1) currentFilters.yearrank1 = filterData.yearrank1;
+        if (filterData.search) currentFilters.search = filterData.search;
+        if (filterData.sort) currentFilters.sort = filterData.sort;
+        if (filterData.page) currentFilters.page = parseInt(filterData.page);
+        
+        
+        
+        // If cookies don't exist, use defaults
+        if (!filterData.category) currentFilters.category = "All";
+        if (!filterData.location) currentFilters.location = "";
+        if (!filterData.yearrank0) currentFilters.yearrank0 = "";
+        if (!filterData.yearrank1) currentFilters.yearrank1 = "";
+        if (!filterData.search) currentFilters.search = "";
+        if (!filterData.sort) currentFilters.sort = "desc";
+        if (!filterData.page) currentFilters.page = 1;
+        
+        
+        // Fetch the jobs initially after loading filters
+        fetchJobs();
+    }
+
+
+    
+    // Save filters to cookies
+    function saveFiltersToCookies() {
+        for (const [key, value] of Object.entries(currentFilters)) {
+            const cookieValue = Array.isArray(value) ? JSON.stringify(value) : value; // Convert arrays to JSON
+            document.cookie = `${key}=${encodeURIComponent(cookieValue)};path=/;max-age=1800`; // 30 minutes
+        }
+    }
+    // loops through, getting key, value, setting max-age to 30 minutes, and saving to path=/
+        
+
+    // Function to clear filters (Reset to defaults)
+    function clearFilters() {
+        currentFilters = {
+            category: "All",
+            location: "",
+            yearrank0: "",
+            yearrank1: "",
+            search: "",
+            sort: "desc",
+            page: 1,
+        };
+
+        // Clear cookies related to filters
+        document.cookie = "category=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+        document.cookie = "location=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+        document.cookie = "yearrank0=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+        document.cookie = "yearrank1=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+        document.cookie = "search=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+        document.cookie = "sort=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+        document.cookie = "page=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+              
+        // Reset UI elements to their default state
+        // Reset category active state
+        document.querySelectorAll(".category").forEach(btn => btn.classList.remove("active"));
+        document.querySelector(".category[data-category='All']")?.classList.add("active");
+        // Clear input fields
+        document.getElementById("search").value = "";
+        // Reset dropdowns/selects (example for location dropdown)
+        const locationSelect = document.getElementById("location");
+        if (locationSelect) locationSelect.value = "";
+        // Reset other fields (e.g., yearrank0 and yearrank1)
+        const yearRank0Input = document.getElementById("yearrank0");
+        if (yearRank0Input) yearRank0Input.value = "";
+        const yearRank1Input = document.getElementById("yearrank1");
+        if (yearRank1Input) yearRank1Input.value = "";
+        // Reset sort button text
+        const sortButton = document.getElementById("sort");
+        if (sortButton) sortButton.textContent = "Sort DSC";
+        
+        
+        // Fetch jobs with reset filters
+        fetchJobs();
+        
+        // Clear the session also on the server-side if there is. The .../
+        fetch('/clear-session', { method: 'POST' });
+    }
+
+    // Function to fetch job data based on current filters
+    function fetchJobs() {
+        const params = new URLSearchParams(currentFilters);
+        fetch(`/get-data?${params}`)
+            .then((response) => response.json())
+            .then((data) => renderJobs(data));
+    }
+
+    // Function to render the fetched jobs and pagination
+    function renderJobs({ data, total_pages }) {
+        const jobList = document.getElementById("job-list");
+        const pagination = document.getElementById("pagination");
+
+        // Render job listings
+        jobList.innerHTML = data.map(job => `
+            <div>
+                <h4 class="classic">${job.title}</h4>
+                <p>${job.location}</p>
+                <p>${job.years_ranking} years</p>
+                <p>Posted: ${job.posted}</p>
+            </div>
+        `).join("");
+
+        // Render pagination controls
+        updatePaginationControls(total_pages);
+    }
+
+    // Function to update pagination controls
+    function updatePaginationControls(totalPages) {
+        const pagination = document.getElementById("pagination");
+        pagination.innerHTML = "";
+
+        // "Prev" button
+        if (currentFilters.page > 1) {
+            const prevButton = createPaginationButton("<< Prev", currentFilters.page - 1);
+            pagination.appendChild(prevButton);
+        }
+
+        // First page
+        pagination.appendChild(createPaginationButton("1", 1));
+
+        // Ellipsis if current page is far from the first page
+        if (currentFilters.page > 4) {
+            pagination.appendChild(createPaginationEllipsis());
+        }
+
+        // Dynamic range of pages around the current page
+        const startPage = Math.max(2, currentFilters.page - 1);
+        const endPage = Math.min(totalPages - 1, currentFilters.page + 1);
+        for (let i = startPage; i <= endPage; i++) {
+            pagination.appendChild(createPaginationButton(i, i));
+        }
+
+        // Ellipsis if current page is far from the last page
+        if (currentFilters.page < totalPages - 3) {
+            pagination.appendChild(createPaginationEllipsis());
+        }
+
+       // Last page: and actual page number instead of "Last" if on the last page
+        if (totalPages > 1) {
+            const lastPageText = currentFilters.page === totalPages ? `${totalPages}` : "Last";
+            pagination.appendChild(createPaginationButton(lastPageText, totalPages));
+        }
+
+        // "Next" button
+        if (currentFilters.page < totalPages) {
+            const nextButton = createPaginationButton("Next >>", currentFilters.page + 1);
+            pagination.appendChild(nextButton);
+        }
+        
+
+        // Apply styles for active page
+        Array.from(pagination.children).forEach(btn => {
+            if (parseInt(btn.textContent) === currentFilters.page || 
+                (btn.textContent === "Last" && currentFilters.page === totalPages)) {
+                btn.classList.add("active"); // Add active class to the current page
+            } else {
+                btn.classList.remove("active"); // Remove active class from other pages
+            }
+        });
+    }
+        
+
+    // Helper to create a pagination button
+    function createPaginationButton(text, page) {
+        const button = document.createElement("li");
+        button.textContent = text;
+        button.style.cursor = "pointer";
+        button.addEventListener("click", () => {
+            currentFilters.page = page;
+            saveFiltersToCookies(); // Save to cookies
+            fetchJobs();  // Fetch new data based on the page
+        });
+        return button;
+    }
+
+    // Helper to create an ellipsis in the pagination
+    function createPaginationEllipsis() {
+        const ellipsis = document.createElement("li");
+        ellipsis.textContent = "...";
+        return ellipsis;
+    }
+
+
+    // Event listeners for category buttons
+    document.querySelectorAll(".category").forEach(btn => {
+        btn.addEventListener("click", () => {
+            // Remove 'active' class from all the buttons
+            document.querySelectorAll(".category").forEach(button => button.classList.remove("active"));       
+            // Add 'active' class to the clicked button
+            btn.classList.add("active");
+
+            currentFilters.category = btn.dataset.category;
+            currentFilters.page = 1;
+            saveFiltersToCookies(); // Save to cookies
+            fetchJobs();
+        });
+    });
+
+    // Event listener for location selection
+    document.getElementById("location").addEventListener("change", (e) => {
+        const selectedOptions = Array.from(e.target.selectedOptions).map(option => option.value); // Get all selected values
+        currentFilters.location = selectedOptions; // Save as an array
+        currentFilters.page = 1;
+        saveFiltersToCookies(); // Save to cookies
+        fetchJobs();
+    });
+
+    // Event listeners for year rank filters
+    document.getElementById("yearrank0").addEventListener("change", (e) => {
+        currentFilters.yearrank0 = e.target.value;  // Get selected yearrank0
+        currentFilters.page = 1;
+        saveFiltersToCookies(); // Save to cookies
+        fetchJobs();
+    });
+
+    document.getElementById("yearrank1").addEventListener("change", (e) => {
+        currentFilters.yearrank1 = e.target.value;  // Get selected yearrank1
+        currentFilters.page = 1;
+        saveFiltersToCookies(); // Save to cookies
+        fetchJobs();
+    });
+
+    // Event listener for search input
+    document.getElementById("search").addEventListener("input", (e) => {
+        currentFilters.search = e.target.value;  // Get the search query
+        currentFilters.page = 1;
+        saveFiltersToCookies(); // Save to cookies
+        fetchJobs();
+    });
+
+    // Event listener for sorting
+    document.getElementById("sort").addEventListener("click", () => {
+        currentFilters.sort = currentFilters.sort === "desc" ? "asc" : "desc";
+        // Update the button text based on the sort order. Default text on sort #id must be "'Sort DESC'", yet.
+        const sortButton = document.getElementById("sort");
+        sortButton.textContent = currentFilters.sort === "desc" ? "Sort DESC" : "Sort ASC";
+        // currentFilters.page = 1; // ????
+        saveFiltersToCookies(); // Save to cookies
+        fetchJobs();
+    });
+
+    // Event listener for pagination control clicks
+    document.getElementById("pagination").addEventListener("click", (e) => {
+        if (e.target.dataset.page) {
+            currentFilters.page = parseInt(e.target.dataset.page);
+            saveFiltersToCookies(); // Save to cookies
+            fetchJobs();
+        }
+    });
+
+    // Clear Filters Button
+    document.getElementById("clear-filters").addEventListener("click", clearFilters);
+
+
+    // Load filters from cookies on page load
+    // loadFiltersFromCookies();
+    
+    // initload on page load, and/or load filters from cookies instead
+    initload();
+    
+
+</script>
+
+
+
+</body>
+</html>
+
+
+
+
+
+
+
+
+<!-- Next, Last. -->
+
